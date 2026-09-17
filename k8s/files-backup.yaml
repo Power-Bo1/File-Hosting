@@ -1,0 +1,76 @@
+# Nightly backup of the uploaded file BLOBS.
+#
+# pg_dump (k8s/postgres-backup.yaml) saves users and file METADATA only.
+# The bytes live on api-files-pvc and until now had no backup at all -
+# restoring the database alone would give you rows pointing at files
+# that do not exist ("recorded for user N but missing on disk").
+#
+# Since v2.11 both volumes are ReadWriteMany (NFS), so this job no longer
+# has to chase the api pod's node - it schedules anywhere. The archive
+# and the live data are still on the same NFS server, so an OFF-CLUSTER
+# copy remains the only protection against losing that server.
+#
+# ORDER: this runs at 03:30, after the 03:00 pg_dump. DB first, blobs
+# second, deliberately - a file uploaded in between ends up in the
+# archive but not the dump (an invisible orphan blob) rather than in the
+# dump but not the archive (a row whose bytes are missing).
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: files-backup
+  namespace: fileapp
+spec:
+  schedule: "30 3 * * *"
+  timeZone: "Asia/Jerusalem"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels: { app: files-backup }
+        spec:
+          restartPolicy: OnFailure
+          # No affinity needed any more: both volumes are RWX, so this
+          # job runs wherever the scheduler likes - including a node
+          # that is NOT holding the live data.
+          containers:
+          - name: backup
+            image: postgres:17          # already cached on the nodes; has GNU tar
+            command: ["/bin/bash", "-ceu"]
+            args:
+              - |
+                STAMP=$(date +%Y%m%d-%H%M%S)
+                FILE="/backups/files-${STAMP}.tar.gz"
+                echo "Archiving /data to ${FILE}"
+                tar -czf "$FILE" -C /data .
+                echo "Verifying the archive is readable"
+                tar -tzf "$FILE" > /dev/null
+                COUNT=$(tar -tzf "$FILE" | grep -vc '/$' || true)
+                echo "OK: ${FILE} ($(du -h "$FILE" | cut -f1), ${COUNT} entries)"
+                echo "Pruning archives older than ${RETENTION_DAYS} days"
+                find /backups -name 'files-*.tar.gz' -mtime +"${RETENTION_DAYS}" -print -delete
+                echo "Archives now on disk:"
+                ls -lh /backups
+            env:
+            - name: RETENTION_DAYS
+              value: "7"
+            resources:
+              requests: { cpu: 50m,  memory: 64Mi }
+              limits:   { cpu: 500m, memory: 256Mi }
+            volumeMounts:
+            - name: files
+              mountPath: /data
+              readOnly: true          # a backup job must never mutate the source
+            - name: backups
+              mountPath: /backups
+          volumes:
+          - name: files
+            persistentVolumeClaim:
+              claimName: api-files-rwx
+          - name: backups
+            persistentVolumeClaim:
+              claimName: files-backup-rwx

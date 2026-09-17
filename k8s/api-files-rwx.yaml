@@ -1,0 +1,28 @@
+# The RWX replacement for api-files-pvc.
+# Kept as a SEPARATE claim so the old RWO volume survives the migration
+# untouched and can be rolled back to.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-files-rwx
+  namespace: fileapp
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-rwx
+  resources:
+    requests:
+      storage: 30Gi
+---
+# Backup archives also move to RWX so the CronJob can run on ANY node -
+# it no longer has to chase the api pod.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: files-backup-rwx
+  namespace: fileapp
+spec:
+  accessModes: [ReadWriteMany]
+  storageClassName: nfs-rwx
+  resources:
+    requests:
+      storage: 30Gi

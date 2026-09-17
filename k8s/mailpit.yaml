@@ -1,0 +1,63 @@
+# Mailpit: catches ALL email the app sends and shows it in a web UI.
+# SMTP is ClusterIP (in-cluster only); the UI gets a MetalLB IP.
+# Recommended (after the Docker Hub lessons): mirror the image first -
+#   docker pull axllent/mailpit:v1.30.4
+#   docker tag axllent/mailpit:v1.30.4 192.168.1.210:5000/mailpit:v1.30.4
+#   docker push 192.168.1.210:5000/mailpit:v1.30.4
+# ...then change the image below to 192.168.1.210:5000/mailpit:v1.30.4
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mailpit
+  namespace: fileapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: mailpit }
+  template:
+    metadata:
+      labels: { app: mailpit }
+    spec:
+      containers:
+      - name: mailpit
+        image: axllent/mailpit:v1.30.4
+        ports:
+        - containerPort: 1025   # SMTP
+        - containerPort: 8025   # web UI
+        resources:
+          requests: { cpu: 25m,  memory: 32Mi }
+          limits:   { cpu: 200m, memory: 128Mi }
+        readinessProbe:
+          httpGet: { path: /readyz, port: 8025 }
+          initialDelaySeconds: 3
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: /livez, port: 8025 }
+          initialDelaySeconds: 10
+          periodSeconds: 20
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit-smtp
+  namespace: fileapp
+spec:
+  selector: { app: mailpit }
+  ports:
+  - port: 1025
+    targetPort: 1025
+  # ClusterIP: only in-cluster apps can send mail here
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mailpit-ui
+  namespace: fileapp
+  annotations:
+    metallb.universe.tf/loadBalancerIPs: 192.168.1.211
+spec:
+  type: LoadBalancer
+  selector: { app: mailpit }
+  ports:
+  - port: 8025
+    targetPort: 8025

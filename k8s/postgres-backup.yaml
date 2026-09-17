@@ -1,0 +1,82 @@
+# Nightly PostgreSQL backups: pg_dump -> verified archive -> 7-day rotation.
+# Dumps land on their own PVC. Trigger a manual run any time with:
+#   kubectl create job -n fileapp --from=cronjob/postgres-backup manual-$(date +%s)
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-backup-pvc
+  namespace: fileapp
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: postgres-backup
+  namespace: fileapp
+spec:
+  schedule: "0 3 * * *"        # every night at 03:00
+  timeZone: "Asia/Jerusalem"   # set yours, e.g. "Europe/Berlin", "Asia/Jerusalem"
+  concurrencyPolicy: Forbid    # never two backups at once
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels: { app: postgres-backup }
+        spec:
+          restartPolicy: OnFailure
+          # Prefer a different node than Postgres itself, so one dead
+          # disk doesn't take both the database AND its backups:
+          affinity:
+            podAntiAffinity:
+              preferredDuringSchedulingIgnoredDuringExecution:
+              - weight: 100
+                podAffinityTerm:
+                  topologyKey: kubernetes.io/hostname
+                  labelSelector:
+                    matchLabels: { app: postgres }
+          containers:
+          - name: backup
+            image: postgres:17          # pg_dump client matches server major
+            command: ["/bin/bash", "-ceu"]
+            args:
+              - |
+                STAMP=$(date +%Y%m%d-%H%M%S)
+                FILE="/backups/clientfiles-${STAMP}.dump"
+                echo "Dumping ${PGDATABASE} to ${FILE}"
+                pg_dump -h "$PGHOST" -U "$PGUSER" -d "$PGDATABASE" -Fc -f "$FILE"
+                echo "Verifying the archive is readable"
+                pg_restore --list "$FILE" > /dev/null
+                echo "OK: ${FILE} ($(du -h "$FILE" | cut -f1))"
+                echo "Pruning dumps older than ${RETENTION_DAYS} days"
+                find /backups -name 'clientfiles-*.dump' -mtime +"${RETENTION_DAYS}" -print -delete
+                echo "Backups now on disk:"
+                ls -lh /backups
+            env:
+            - name: PGHOST
+              value: postgres.fileapp.svc.cluster.local
+            - name: PGDATABASE
+              valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_DB } }
+            - name: PGUSER
+              valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_USER } }
+            - name: PGPASSWORD
+              valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_PASSWORD } }
+            - name: RETENTION_DAYS
+              value: "7"
+            resources:
+              requests: { cpu: 50m, memory: 64Mi }
+              limits:   { cpu: 500m, memory: 256Mi }
+            volumeMounts:
+            - name: backups
+              mountPath: /backups
+          volumes:
+          - name: backups
+            persistentVolumeClaim:
+              claimName: postgres-backup-pvc

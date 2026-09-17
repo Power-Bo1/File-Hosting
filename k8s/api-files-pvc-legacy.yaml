@@ -1,0 +1,14 @@
+# The ORIGINAL ReadWriteOnce upload volume, kept after the v2.11 move to
+# RWX so the pre-migration data survives and a rollback is possible.
+# Delete it only once you are confident in the NFS volume:
+#   kubectl delete -f k8s/api-files-pvc-legacy.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: api-files-pvc
+  namespace: fileapp
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi

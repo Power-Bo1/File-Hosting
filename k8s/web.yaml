@@ -1,0 +1,109 @@
+# Website (Image 1, v2.1)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web
+  namespace: fileapp
+spec:
+  replicas: 2
+  selector:
+    matchLabels: { app: web }
+  template:
+    metadata:
+      labels: { app: web }
+    spec:
+      # Runs as the nonroot UID built into the DHI base image (see web/Dockerfile).
+      # fsGroup is what makes volume ownership consistent; web has no PVC but keeps
+      # the same UID as the api image.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      dnsConfig:          # 4-dot service names resolve directly; no
+        options:          # search-list expansion, no upstream stalls
+        - name: ndots
+          value: "2"
+        - name: timeout
+          value: "2"
+        - name: attempts
+          value: "2"
+      containers:
+      - name: web
+        image: 192.168.1.210:5000/file-web:2.13
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true      # /tmp is a writable emptyDir
+          capabilities:
+            drop: ["ALL"]
+        ports:
+        - containerPort: 5000
+        env:
+        - name: API_URL
+          value: http://api.fileapp.svc.cluster.local:8000
+        - name: FLASK_SECRET_KEY
+          valueFrom: { secretKeyRef: { name: app-auth-secret, key: FLASK_SECRET_KEY } }
+        - name: COOKIE_SECURE
+          value: "true"
+        - name: MAX_UPLOAD_MB
+          value: "100"
+        resources:
+          requests: { cpu: 50m, memory: 96Mi }
+          limits:   { cpu: 300m, memory: 256Mi }
+        volumeMounts:
+        - name: tmp
+          mountPath: /tmp
+        readinessProbe:
+          httpGet: { path: /health, port: 5000 }
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet: { path: /health, port: 5000 }
+          initialDelaySeconds: 15
+          periodSeconds: 20
+      volumes:
+      - name: tmp               # gunicorn worker heartbeat files
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+  namespace: fileapp
+spec:
+  selector: { app: web }
+  ports:
+  - port: 80
+    targetPort: 5000
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: fileapp
+  annotations:
+    cert-manager.io/cluster-issuer: lab-ca-issuer
+    # ingress-nginx rejects bodies >1m by default; without this, any
+    # upload over 1 MB dies at the ingress with a 413:
+    nginx.ingress.kubernetes.io/proxy-body-size: "120m"
+    # Optional brute-force damper (requests/sec per client IP):
+    nginx.ingress.kubernetes.io/limit-rps: "20"
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - files.local
+    secretName: files-local-tls
+  rules:
+  - host: files.local
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: web
+            port:
+              number: 80

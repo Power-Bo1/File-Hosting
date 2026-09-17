@@ -1,0 +1,73 @@
+# One-shot copy of the existing uploads from the RWO volume to the RWX
+# volume. Runs as root so it can chown the destination to the api's
+# runAsUser (fsGroup does not reliably apply over NFS).
+#
+# Scale the api Deployment to 0 first - api-files-pvc is ReadWriteOnce
+# and cannot be mounted here while the api pod holds it.
+#
+#   kubectl scale deploy/api -n fileapp --replicas=0
+#   kubectl wait --for=delete pod -n fileapp -l app=api --timeout=120s
+#   kubectl apply -f k8s/migrate-files-to-rwx.yaml
+#   kubectl logs -n fileapp -l job-name=migrate-files-to-rwx -f
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-files-to-rwx
+  namespace: fileapp
+spec:
+  backoffLimit: 1
+  template:
+    metadata:
+      labels: { app: migrate-files }
+    spec:
+      restartPolicy: Never
+      containers:
+      - name: migrate
+        image: postgres:17
+        securityContext:
+          runAsUser: 0            # needs to chown the destination
+        command: ["/bin/bash", "-ceu"]
+        args:
+          - |
+            echo "=== source (RWO) ==="
+            find /old -type f | sed 's|^/old/||' | sort | tee /tmp/src.txt
+            SRC=$(wc -l < /tmp/src.txt)
+
+            echo "=== copying (preserving mode/timestamps) ==="
+            cp -a /old/. /new/
+
+            echo "=== chown to the api runAsUser ==="
+            chown -R 65532:65532 /new
+            chmod -R u+rwX,g+rwX /new
+
+            echo "=== destination (RWX) ==="
+            find /new -type f | sed 's|^/new/||' | sort | tee /tmp/dst.txt
+            DST=$(wc -l < /tmp/dst.txt)
+
+            echo "=== verifying ==="
+            if ! diff /tmp/src.txt /tmp/dst.txt; then
+              echo "FAIL: file lists differ"; exit 1
+            fi
+            MISMATCH=0
+            while read -r f; do
+              [ -z "$f" ] && continue
+              a=$(md5sum "/old/$f" | cut -d' ' -f1)
+              b=$(md5sum "/new/$f" | cut -d' ' -f1)
+              if [ "$a" != "$b" ]; then echo "FAIL checksum: $f"; MISMATCH=1; fi
+            done < /tmp/src.txt
+            [ "$MISMATCH" = "0" ] || exit 1
+            echo "MIGRATION OK: ${SRC} source / ${DST} destination files, checksums match"
+            ls -la /new /new/* 2>/dev/null || true
+        volumeMounts:
+        - name: old
+          mountPath: /old
+          readOnly: true
+        - name: new
+          mountPath: /new
+      volumes:
+      - name: old
+        persistentVolumeClaim:
+          claimName: api-files-pvc
+      - name: new
+        persistentVolumeClaim:
+          claimName: api-files-rwx

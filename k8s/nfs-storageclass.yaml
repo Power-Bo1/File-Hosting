@@ -1,0 +1,23 @@
+# ReadWriteMany storage via csi-driver-nfs, backed by an NFS export on
+# the master node. See UPGRADE.md for the host-side setup - the export
+# and `nfs-common` on every node are prerequisites, not something a
+# manifest can create.
+#
+# reclaimPolicy: Retain is deliberate. These are USER FILES: deleting a
+# PVC by accident must not delete the data with it. The directory stays
+# on the NFS server and can be re-attached.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: nfs-rwx
+provisioner: nfs.csi.k8s.io
+parameters:
+  server: 192.168.190.128          # master node - change if you move it
+  share: /srv/nfs/fileapp
+reclaimPolicy: Retain
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+mountOptions:
+  - nfsvers=4.1
+  - hard                            # retry forever rather than return EIO
+  - noatime

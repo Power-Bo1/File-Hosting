@@ -1,0 +1,39 @@
+# On-demand helper for browsing / restoring file-blob archives.
+# Mounts the live volume read-write and the archive volume read-only.
+# Pinned to the api pod's node because both PVCs are ReadWriteOnce.
+#
+#   RWX means you do NOT need to scale the api down just to look around.
+#   Scale to 0 only for a full restore, so nothing writes mid-extract.
+#   kubectl apply -f k8s/files-restore-shell.yaml
+#   kubectl exec -it -n fileapp files-restore-shell -- bash
+#   ...
+#   kubectl delete pod -n fileapp files-restore-shell
+#   kubectl scale deploy/api -n fileapp --replicas=1
+apiVersion: v1
+kind: Pod
+metadata:
+  name: files-restore-shell
+  namespace: fileapp
+  labels: { app: files-restore-shell }
+spec:
+  restartPolicy: Never
+  containers:
+  - name: shell
+    image: postgres:17
+    command: ["sleep", "infinity"]
+    resources:
+      requests: { cpu: 50m,  memory: 64Mi }
+      limits:   { cpu: 300m, memory: 256Mi }
+    volumeMounts:
+    - name: files
+      mountPath: /data
+    - name: backups
+      mountPath: /backups
+      readOnly: true
+  volumes:
+  - name: files
+    persistentVolumeClaim:
+      claimName: api-files-rwx
+  - name: backups
+    persistentVolumeClaim:
+      claimName: files-backup-rwx

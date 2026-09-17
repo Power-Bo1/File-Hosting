@@ -1,0 +1,36 @@
+# On-demand helper pod for browsing backups and running restores.
+# Not part of the running system - apply it when needed, delete after:
+#   kubectl apply -f k8s/backup-shell.yaml
+#   kubectl exec -it -n fileapp backup-shell -- bash
+#   kubectl delete pod -n fileapp backup-shell
+apiVersion: v1
+kind: Pod
+metadata:
+  name: backup-shell
+  namespace: fileapp
+  labels: { app: backup-shell }
+spec:
+  restartPolicy: Never
+  containers:
+  - name: shell
+    image: postgres:17
+    command: ["sleep", "infinity"]
+    env:
+    - name: PGHOST
+      value: postgres.fileapp.svc.cluster.local
+    - name: PGDATABASE
+      valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_DB } }
+    - name: PGUSER
+      valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_USER } }
+    - name: PGPASSWORD
+      valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_PASSWORD } }
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits:   { cpu: 300m, memory: 256Mi }
+    volumeMounts:
+    - name: backups
+      mountPath: /backups
+  volumes:
+  - name: backups
+    persistentVolumeClaim:
+      claimName: postgres-backup-pvc

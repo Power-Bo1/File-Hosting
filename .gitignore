@@ -1,0 +1,14 @@
+# Real credentials never go into version control.
+# Commit the *-secret.example.yaml templates instead, and copy them:
+#   cp k8s/postgres-secret.example.yaml k8s/postgres-secret.yaml
+k8s/*-secret.yaml
+!k8s/*-secret.example.yaml
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local backup copies pulled off-cluster
+pg-backups-*/

@@ -1,0 +1,38 @@
+# ── Stage 1: build dependencies ───────────────────────────────────────
+# Pin by digest for immutability - see api/Dockerfile for the command.
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ── Stage 2: lean runtime ─────────────────────────────────────────────
+FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="file-web" \
+      org.opencontainers.image.description="Client File Host website"
+
+RUN apt-get update && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 appgroup \
+    && useradd --system --uid 10001 --gid appgroup --no-create-home appuser \
+    && python -m pip uninstall -y pip setuptools
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY --from=builder /install /usr/local
+COPY --chown=appuser:appgroup *.py ./
+
+USER appuser
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"
+
+# --worker-tmp-dir /tmp keeps gunicorn's heartbeat files on the writable
+# emptyDir, which readOnlyRootFilesystem requires.
+CMD ["gunicorn", "-w", "2", "--threads", "4", "--timeout", "120", \
+     "--worker-tmp-dir", "/tmp", "-b", "0.0.0.0:5000", "web:app"]

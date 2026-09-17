@@ -1,0 +1,5 @@
+# Apply FIRST. Secrets and workloads below all live in this namespace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: fileapp

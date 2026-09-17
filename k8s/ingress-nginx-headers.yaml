@@ -1,0 +1,88 @@
+# Security response headers, applied by ingress-nginx to every response
+# it serves. Two pieces:
+#   1. this ConfigMap - the headers themselves
+#   2. a patch on the controller's own ConfigMap so it USES this one:
+#
+#   kubectl -n ingress-nginx patch configmap ingress-nginx-controller \
+#     --type merge -p '{"data":{
+#       "add-headers":"ingress-nginx/custom-response-headers",
+#       "hsts":"true",
+#       "hsts-max-age":"31536000",
+#       "hsts-include-subdomains":"true",
+#       "hsts-preload":"false"
+#     }}'
+#   kubectl -n ingress-nginx rollout restart deploy/ingress-nginx-controller
+#
+# Why a ConfigMap rather than a configuration-snippet annotation:
+# ingress-nginx disables snippet annotations by default (since 1.9) as a
+# hardening measure, and enabling them re-opens that hole for every
+# Ingress in the cluster. add-headers needs no such exception.
+#
+# NOTE: applies to ALL ingress traffic. In this cluster only files.local
+# is served through the ingress (Grafana, Mailpit and the registry are
+# LoadBalancer Services), so cluster-wide is the same as app-wide here.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: custom-response-headers
+  namespace: ingress-nginx
+data:
+  # Stop browsers guessing a MIME type different from the declared one.
+  X-Content-Type-Options: "nosniff"
+  # Belt and braces with CSP frame-ancestors, for older browsers.
+  X-Frame-Options: "DENY"
+  # Do not leak the current URL (which can contain a reset token!) in
+  # the Referer header of any outbound navigation.
+  Referrer-Policy: "no-referrer"
+  # Explicitly switch off powerful browser features this app never uses.
+  Permissions-Policy: "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
+  # The legacy XSS auditor is deprecated and can itself introduce bugs;
+  # 0 disables it, which is current guidance when a CSP is present.
+  X-XSS-Protection: "0"
+  Cross-Origin-Opener-Policy: "same-origin"
+  # Stops another origin loading our pages or downloads as a subresource
+  # (<img>, <script>, fetch). Relevant to malware distribution: a hostile
+  # site cannot silently pull a file from here and re-serve it as its own.
+  Cross-Origin-Resource-Policy: "same-origin"
+  # font-src 'none' closes the CSS text-exfiltration channel: the
+  # @font-face + unicode-range trick leaks a page's text one character
+  # at a time by requesting a different font file per glyph range. The
+  # app uses system fonts only, so no font is ever fetched and this
+  # costs nothing. default-src would have allowed same-origin fonts.
+  #
+  # connect-src 'none' blocks fetch/XHR/WebSocket/EventSource/Beacon.
+  # With script-src 'none' there is nothing to issue them, but a CSP is
+  # cheapest when it states the intent rather than implying it.
+  #
+  # media-src/frame-src/worker-src/manifest-src 'none': the app uses
+  # none of them, so say so - every unstated directive silently
+  # inherits default-src 'self'.
+  # upgrade-insecure-requests rewrites any http:// subresource or
+  # same-origin navigation to https:// BEFORE the request is made. The app
+  # loads no external assets today, so it changes nothing now - it is
+  # insurance: a future http:// asset gets upgraded instead of being
+  # blocked as mixed content. (Cross-origin top-level navigations are not
+  # affected - that is HSTS / the browser's HTTPS-First territory.)
+  # script-src 'none' is safe because the app ships NO JavaScript at all.
+  # style-src is 'self' with NO 'unsafe-inline' since v2.12: the web app
+  # serves its CSS from /style.css rather than an inline <style> block,
+  # so an injected <style> tag is now blocked too. Reverting the app
+  # without reverting this header will leave the site unstyled.
+  # If you ever add a <script>, this WILL block it - that is the point;
+  # loosen it deliberately, not by accident.
+  Content-Security-Policy: >-
+    default-src 'self';
+    script-src 'none';
+    style-src 'self';
+    img-src 'self' data:;
+    font-src 'none';
+    connect-src 'none';
+    media-src 'none';
+    frame-src 'none';
+    worker-src 'none';
+    manifest-src 'none';
+    form-action 'self';
+    frame-ancestors 'none';
+    base-uri 'self';
+    object-src 'none';
+    upgrade-insecure-requests

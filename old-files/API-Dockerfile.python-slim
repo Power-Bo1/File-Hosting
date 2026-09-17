@@ -1,0 +1,44 @@
+# ── Stage 1: build dependencies ───────────────────────────────────────
+# Pin by digest for immutability. To get the current one:
+#   docker pull python:3.12-slim
+#   docker inspect --format='{{index .RepoDigests 0}}' python:3.12-slim
+# then use:  FROM python:3.12-slim@sha256:<digest> AS builder
+FROM python:3.12-slim AS builder
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+
+# ── Stage 2: lean runtime ─────────────────────────────────────────────
+FROM python:3.12-slim
+
+LABEL org.opencontainers.image.title="file-api" \
+      org.opencontainers.image.description="Client File Host API"
+
+# Patch base-image CVEs, create a FIXED-UID non-root user, drop pip so a
+# compromised process cannot install packages.
+# The UID/GID must match runAsUser/runAsGroup/fsGroup in k8s/api.yaml -
+# fsGroup is what makes the /data PVC writable by this user.
+RUN apt-get update && apt-get upgrade -y \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 10001 appgroup \
+    && useradd --system --uid 10001 --gid appgroup --no-create-home appuser \
+    && python -m pip uninstall -y pip setuptools
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY --from=builder /install /usr/local
+COPY --chown=appuser:appgroup *.py ./
+
+USER appuser
+
+EXPOSE 8000
+
+# Ignored by Kubernetes (it uses the probes in k8s/api.yaml); useful for
+# plain `docker run`.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
+
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]

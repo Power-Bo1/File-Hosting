@@ -1,0 +1,128 @@
+# API (Image 2, v2.1)
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: fileapp
+spec:
+  replicas: 2               # RWX volume: both replicas share /data
+  strategy:
+    type: RollingUpdate     # RWX removes the Recreate constraint, so
+    rollingUpdate:          # deploys are now zero-downtime
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels: { app: api }
+  template:
+    metadata:
+      labels: { app: api }
+    spec:
+      # Spread the two replicas across nodes when possible - RWX means
+      # either node can serve uploads from the same shared /data.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels: { app: api }
+      # Runs as the nonroot UID built into the DHI base image (see api/Dockerfile).
+      # fsGroup is what makes the /data PVC writable by a non-root user -
+      # kubelet chowns the volume to this GID on mount.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      dnsConfig:          # 4-dot service names resolve directly; no
+        options:          # search-list expansion, no upstream stalls
+        - name: ndots
+          value: "2"
+        - name: timeout
+          value: "2"
+        - name: attempts
+          value: "2"
+      containers:
+      - name: api
+        image: 192.168.1.210:5000/file-api:2.13
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true      # /tmp is a writable emptyDir
+          capabilities:
+            drop: ["ALL"]
+        ports:
+        - containerPort: 8000
+        env:
+        - name: DB_HOST
+          value: postgres.fileapp.svc.cluster.local
+        - name: DB_NAME
+          valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_DB } }
+        - name: DB_USER
+          valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_USER } }
+        - name: DB_PASSWORD
+          valueFrom: { secretKeyRef: { name: postgres-secret, key: POSTGRES_PASSWORD } }
+        - name: JWT_SECRET
+          valueFrom: { secretKeyRef: { name: app-auth-secret, key: JWT_SECRET } }
+        - name: TOKEN_TTL_MINUTES
+          value: "60"
+        - name: MAX_UPLOAD_MB
+          value: "100"
+        - name: DB_CONNECT_TIMEOUT
+          value: "5"
+        # --- password-reset email settings (Mailpit by default) ---
+        # Real provider: change SMTP_HOST/PORT, set SMTP_STARTTLS "true",
+        # and create the optional smtp-secret (see k8s/smtp-secret.yaml).
+        - name: SMTP_HOST
+          value: mailpit-smtp.fileapp.svc.cluster.local
+        - name: SMTP_PORT
+          value: "1025"
+        - name: SMTP_STARTTLS
+          value: "false"      # Mailpit has no TLS; "true" only for a real provider
+        - name: SMTP_FROM
+          value: no-reply@files.local
+        - name: SMTP_USER
+          valueFrom: { secretKeyRef: { name: smtp-secret, key: SMTP_USER, optional: true } }
+        - name: SMTP_PASS
+          valueFrom: { secretKeyRef: { name: smtp-secret, key: SMTP_PASS, optional: true } }
+        - name: APP_BASE_URL
+          value: https://files.local
+        - name: RESET_TTL_MINUTES
+          value: "30"
+        volumeMounts:
+        - name: files
+          mountPath: /data
+        - name: tmp
+          mountPath: /tmp
+        resources:
+          requests: { cpu: 100m, memory: 128Mi }
+          limits:   { cpu: 500m, memory: 512Mi }
+        readinessProbe:           # /ready also checks the DB ->
+          httpGet: { path: /ready, port: 8000 }   # stop traffic when DB is down
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5        # default 1s is too tight for a DB check
+          failureThreshold: 3
+        livenessProbe:            # /health = process alive -> restart if hung
+          httpGet: { path: /health, port: 8000 }
+          initialDelaySeconds: 15
+          periodSeconds: 20
+      volumes:
+      - name: files
+        persistentVolumeClaim:
+          claimName: api-files-rwx
+      - name: tmp                 # multipart upload spooling needs a
+        emptyDir: {}              # writable /tmp under a read-only root
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+  namespace: fileapp
+spec:
+  selector: { app: api }
+  ports:
+  - port: 8000
+    targetPort: 8000

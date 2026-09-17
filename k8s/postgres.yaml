@@ -1,0 +1,71 @@
+# PostgreSQL. ClusterIP Service = internal only (not reachable from the LAN).
+# Credentials live in k8s/postgres-secret.yaml; the namespace in
+# k8s/namespace.yaml. Apply order: namespace -> secrets -> this file.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: fileapp
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: fileapp
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: postgres }
+  template:
+    metadata:
+      labels: { app: postgres }
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:17
+        envFrom:
+        - secretRef: { name: postgres-secret }
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/data/pgdata
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+        resources:
+          requests: { cpu: 250m, memory: 256Mi }
+          limits:   { cpu: "1",  memory: 1Gi }
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "appuser", "-d", "clientfiles"]
+          initialDelaySeconds: 10
+          periodSeconds: 5
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "appuser", "-d", "clientfiles"]
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          failureThreshold: 6
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: fileapp
+spec:
+  selector: { app: postgres }
+  ports:
+  - port: 5432
+    targetPort: 5432

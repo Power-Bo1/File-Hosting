@@ -1,0 +1,16 @@
+# OPTIONAL, Traefik only: force HTTP -> HTTPS.
+# 1) kubectl apply -f k8s/traefik-https-redirect.yaml
+# 2) Add this annotation to the web Ingress (already present, commented,
+#    in k8s/web.yaml):
+#      traefik.ingress.kubernetes.io/router.middlewares: fileapp-redirect-https@kubernetescrd
+# (ingress-nginx users don't need this: it 308-redirects to HTTPS by
+#  default as soon as the Ingress has a tls: section.)
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: redirect-https
+  namespace: fileapp
+spec:
+  redirectScheme:
+    scheme: https
+    permanent: true
