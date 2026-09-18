@@ -233,7 +233,11 @@ class ApiTests(unittest.TestCase):
         r = self.client.post("/upload", headers=self.auth(t),
                              files={"file": ("big.bin", big, "application/octet-stream")})
         self.assertEqual(r.status_code, 413)
-        leftovers = [p for _, _, fs in os.walk(os.environ["DATA_DIR"])
+        data_dir = os.path.realpath(os.environ["DATA_DIR"])
+        safe_root = os.path.realpath(tempfile.gettempdir())
+        if os.path.commonpath([data_dir, safe_root]) != safe_root:
+            self.fail(f"Unsafe DATA_DIR outside temp root: {data_dir}")
+        leftovers = [p for _, _, fs in os.walk(data_dir)
                      for p in fs if p.endswith(".part")]
         self.assertEqual(leftovers, [])
 
