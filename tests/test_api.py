@@ -372,7 +372,9 @@ class ApiTests(unittest.TestCase):
         self.upload_as(t, "gone.txt", b"bye")
         import os
         uid = self.state["users"]["xena"]["id"]
-        path = os.path.join(os.environ["DATA_DIR"], str(uid), "gone.txt")
+        base_dir = os.path.realpath(os.environ["DATA_DIR"])
+        path = os.path.realpath(os.path.join(base_dir, str(uid), "gone.txt"))
+        self.assertEqual(os.path.commonpath([base_dir, path]), base_dir)
         self.assertTrue(os.path.isfile(path))
 
         r = self.client.delete("/files/gone.txt", headers=self.auth(t))
