@@ -450,6 +450,15 @@ async def upload(file: UploadFile = File(...), user=Depends(current_user)):
     return {"stored": fname, "size": written}
 
 
+def _user_file_path(user_id, fname: str) -> str:
+    """Return canonical path to a user's file, confined to that user's dir."""
+    user_root = os.path.realpath(os.path.join(DATA_DIR, str(user_id)))
+    path = os.path.realpath(os.path.join(user_root, fname))
+    if os.path.commonpath([user_root, path]) != user_root:
+        raise HTTPException(400, "Invalid filename")
+    return path
+
+
 @app.get("/files/{filename}")
 def download_file(filename: str, user=Depends(current_user)):
     """Serve one of the caller's own files.
@@ -474,7 +483,7 @@ def download_file(filename: str, user=Depends(current_user)):
     if not row:
         raise HTTPException(404, "File not found")
 
-    path = os.path.join(DATA_DIR, str(user["id"]), fname)
+    path = _user_file_path(user["id"], fname)
     if not os.path.isfile(path):
         print(f"WARNING: {fname} is recorded for user {user['id']} "
               f"but missing on disk")
@@ -495,7 +504,7 @@ def delete_file(filename: str, user=Depends(current_user)):
     except ValueError:
         raise HTTPException(400, "Invalid filename")
 
-    path = os.path.join(DATA_DIR, str(user["id"]), fname)
+    path = _user_file_path(user["id"], fname)
     with db_conn() as conn:
         cur = conn.cursor()
         cur.execute(
