@@ -236,9 +236,12 @@ class ApiTests(unittest.TestCase):
         raw_data_dir = os.environ.get("DATA_DIR", "")
         validated_data_dir = os.path.realpath(raw_data_dir)
         safe_root = os.path.realpath(tempfile.gettempdir())
+        scan_dir = safe_root
         if os.path.commonpath([validated_data_dir, safe_root]) != safe_root:
             self.fail(f"Unsafe DATA_DIR outside temp root: {validated_data_dir}")
-        leftovers = [p for _, _, fs in os.walk(validated_data_dir)
+        else:
+            scan_dir = validated_data_dir
+        leftovers = [p for _, _, fs in os.walk(scan_dir)
                      for p in fs if p.endswith(".part")]
         self.assertEqual(leftovers, [])
 
