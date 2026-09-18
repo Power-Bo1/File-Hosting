@@ -20,6 +20,15 @@ from security import (
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
+
+def user_file_path(user_id, fname: str) -> str:
+    """Return a canonical path for a user's file constrained to DATA_DIR."""
+    user_root = os.path.realpath(os.path.join(DATA_DIR, str(user_id)))
+    path = os.path.realpath(os.path.join(user_root, fname))
+    if os.path.commonpath([user_root, path]) != user_root:
+        raise HTTPException(400, "Invalid filename")
+    return path
+
 JWT_SECRET = os.environ["JWT_SECRET"]
 TOKEN_TTL_MINUTES = int(os.environ.get("TOKEN_TTL_MINUTES", "60"))
 RESET_TTL_MINUTES = int(os.environ.get("RESET_TTL_MINUTES", "30"))
@@ -474,7 +483,7 @@ def download_file(filename: str, user=Depends(current_user)):
     if not row:
         raise HTTPException(404, "File not found")
 
-    path = os.path.join(DATA_DIR, str(user["id"]), fname)
+    path = user_file_path(user["id"], fname)
     if not os.path.isfile(path):
         print(f"WARNING: {fname} is recorded for user {user['id']} "
               f"but missing on disk")
@@ -495,7 +504,7 @@ def delete_file(filename: str, user=Depends(current_user)):
     except ValueError:
         raise HTTPException(400, "Invalid filename")
 
-    path = os.path.join(DATA_DIR, str(user["id"]), fname)
+    path = user_file_path(user["id"], fname)
     with db_conn() as conn:
         cur = conn.cursor()
         cur.execute(
