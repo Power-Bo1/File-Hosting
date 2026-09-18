@@ -17,7 +17,11 @@ from security import (
     TokenExpired, TokenInvalid,
 )
 
-DATA_DIR = os.environ.get("DATA_DIR", "/data")
+SAFE_DATA_ROOT = os.path.realpath("/data")
+_raw_data_dir = os.environ.get("DATA_DIR", SAFE_DATA_ROOT)
+DATA_DIR = os.path.realpath(_raw_data_dir)
+if os.path.commonpath([SAFE_DATA_ROOT, DATA_DIR]) != SAFE_DATA_ROOT:
+    raise RuntimeError("Invalid DATA_DIR: must be within /data")
 os.makedirs(DATA_DIR, exist_ok=True)
 
 JWT_SECRET = os.environ["JWT_SECRET"]
