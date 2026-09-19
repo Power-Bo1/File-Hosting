@@ -29,11 +29,13 @@ file-host-k8s/
 ├── .gitignore                # keeps k8s/*-secret.yaml out of version control
 ├── api/                      # Image 2 — FastAPI
 │   ├── Dockerfile            # distroless, non-root, digest-pinned
-│   ├── Dockerfile.python-slim  # pre-v2.6 fallback
-│   ├── app.py  security.py  mailer.py  requirements.txt
+│   └── app.py  security.py  mailer.py  requirements.txt
 ├── web/                      # Image 1 — Flask, zero JavaScript
-│   ├── Dockerfile  Dockerfile.python-slim
+│   ├── Dockerfile
 │   └── web.py  requirements.txt
+├── old-files/                # superseded, kept for rollback
+│   ├── API-Dockerfile.python-slim   # pre-v2.6 python:3.12-slim build
+│   └── WEB-Dockerfile.python-slim
 ├── k8s/
 │   ├── namespace.yaml              # apply FIRST
 │   ├── postgres-secret.yaml        # gitignored  (+ .example.yaml template)
@@ -272,7 +274,7 @@ with your DNS provider's API token instead.
 
 ---
 
-## Release history — v2.4 to v2.13
+## Release history — v2 to v2.13
 
 Summaries only. **`UPGRADE.md` carries the detail**: what broke, why the
 fix is shaped the way it is, the migration commands, and the honest
@@ -283,6 +285,12 @@ pushed. Where it says *no*, applying the manifests is enough.
 
 | Version | Change | Rebuild? |
 |---|---|---|
+| **v2** | User accounts and HTTPS. Registration with email, bcrypt password hashing, JWT sessions, and per-user file isolation — every row scoped by `user_id`. TLS on `files.local` issued by an in-cluster lab CA via cert-manager. | **yes** |
+| **v2.1** | Production-hardening pass: 13 bugs found by review and testing, including leaked DB connections on error paths, no upload size cap, a frontend that 500'd when the API was down, duplicate rows on re-upload, half-written files after an interrupted transfer, and a 1 MB ingress body limit that silently rejected real uploads. Added `tests/` and `scripts/validate_k8s.py`. | **yes** |
+| **v2.1.1** | Readiness-probe hotfix. `/ready` ran a blocking commit on a sync thread with no `connect_timeout`, so any DB hiccup pinned the pod at 0/1 Ready and the Service refused traffic. | **yes** |
+| **v2.2** | Nightly PostgreSQL backups: `pg_dump` CronJob, every archive verified readable at creation, 7-day retention, plus a helper pod and a documented restore procedure. | no |
+| **v2.2.1** | `scripts/restore-drill.sh` — restores the newest backup into a scratch database and compares row counts, in one command. An untested backup is an assumption, not a safeguard. | no |
+| **v2.3** | "Forgot password" by email: single-use 30-minute links stored only as SHA-256 hashes, no account enumeration, and a `token_version` bump that force-logs-out every session on reset. Mailpit added as an in-cluster SMTP catcher. | **yes** |
 | **v2.4** | Credentials moved out of manifests into gitignored `k8s/*-secret.yaml` with committed `.example` templates; `namespace.yaml` split out; Grafana switched to `admin.existingSecret`. Also recorded the **pod-CIDR migration** (192.168.0.0/16 → 10.244.0.0/16) that fixed all pod→LAN egress. | no |
 | **v2.5** | Container hardening: multi-stage builds, non-root fixed UID, read-only root filesystem, all capabilities dropped, seccomp, resource limits, `.dockerignore`, `PYTHONUNBUFFERED` so logs reach Loki in real time. | **yes** |
 | **v2.6** | Base image moved to Docker Hardened Images (distroless, 0 CVEs, UID 65532), digest-pinned, dependencies in a venv. **v2.6.1** stripped pip, which the venv had silently reintroduced. **v2.6.2** fixed a build gate that reported PASSED while skipping checks. | **yes** |
