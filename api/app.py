@@ -406,9 +406,16 @@ async def upload(file: UploadFile = File(...), user=Depends(current_user)):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    user_dir = os.path.join(DATA_DIR, str(user["id"]))
+    base_dir = os.path.realpath(DATA_DIR)
+    user_id_part = str(user["id"])
+    user_dir = os.path.realpath(os.path.join(base_dir, user_id_part))
+    if os.path.commonpath([base_dir, user_dir]) != base_dir:
+        raise HTTPException(400, "Invalid user path")
+
     os.makedirs(user_dir, exist_ok=True)
-    dest = os.path.join(user_dir, fname)
+    dest = os.path.realpath(os.path.join(user_dir, fname))
+    if os.path.commonpath([user_dir, dest]) != user_dir:
+        raise HTTPException(400, "Invalid filename path")
     tmp = dest + ".part"
 
     limit = MAX_UPLOAD_MB * 1024 * 1024
