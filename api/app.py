@@ -18,7 +18,16 @@ from security import (
 )
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
-DATA_ROOT = os.path.realpath(DATA_DIR)
+
+def _validate_data_root(path_value: str) -> str:
+    resolved = os.path.realpath(path_value)
+    if "\x00" in path_value:
+        raise ValueError("Invalid DATA_DIR: null byte is not allowed")
+    if not os.path.isabs(resolved):
+        raise ValueError("Invalid DATA_DIR: absolute path is required")
+    return resolved
+
+DATA_ROOT = _validate_data_root(DATA_DIR)
 os.makedirs(DATA_ROOT, exist_ok=True)
 
 JWT_SECRET = os.environ["JWT_SECRET"]
