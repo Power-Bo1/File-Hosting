@@ -9,6 +9,7 @@ Covers Deployments, CronJobs, and standalone Pods.
 Requires only PyYAML.  Exit code 0 = all checks pass.
 """
 import glob
+import re
 import sys
 
 import yaml
@@ -162,10 +163,16 @@ for f, ns, name, d in ingresses:
                 passes.append(f"Ingress {ns}/{name}: backend "
                               f"{be['name']}:{want} resolves")
 
+def _redact_sensitive_log_data(message: str) -> str:
+    message = re.sub(r"(->\s*Secret)\s+\S+", r"\1 [REDACTED]", message)
+    message = re.sub(r"(Secret)\s+\S+/\S+", r"\1 [REDACTED]", message)
+    message = re.sub(r"(envFrom\s+Secret)\s+\S+", r"\1 [REDACTED]", message)
+    return message
+
 print(f"PASS  ({len(passes)} checks)")
 for w in warns:
     print(f"WARN  {w}")
 for x in fails:
-    print(f"FAIL  {x}")
+    print(f"FAIL  {_redact_sensitive_log_data(x)}")
 print(f"\n{len(passes)} passed, {len(warns)} warnings, {len(fails)} failures")
 sys.exit(1 if fails else 0)
