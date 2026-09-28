@@ -18,7 +18,17 @@ from security import (
 )
 
 DATA_DIR = os.environ.get("DATA_DIR", "/data")
-os.makedirs(DATA_DIR, exist_ok=True)
+
+def _validate_data_root(path_value: str) -> str:
+    resolved = os.path.realpath(path_value)
+    if "\x00" in path_value:
+        raise ValueError("Invalid DATA_DIR: null byte is not allowed")
+    if not os.path.isabs(resolved):
+        raise ValueError("Invalid DATA_DIR: absolute path is required")
+    return resolved
+
+DATA_ROOT = _validate_data_root(DATA_DIR)
+os.makedirs(DATA_ROOT, exist_ok=True)
 
 JWT_SECRET = os.environ["JWT_SECRET"]
 TOKEN_TTL_MINUTES = int(os.environ.get("TOKEN_TTL_MINUTES", "60"))
@@ -406,10 +416,18 @@ async def upload(file: UploadFile = File(...), user=Depends(current_user)):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    user_dir = os.path.join(DATA_DIR, str(user["id"]))
+    user_dir = os.path.realpath(os.path.join(DATA_ROOT, str(user["id"])))
+    dest = os.path.realpath(os.path.join(user_dir, fname))
+    tmp = os.path.realpath(dest + ".part")
+
+    if (
+        os.path.commonpath([DATA_ROOT, user_dir]) != DATA_ROOT
+        or os.path.commonpath([DATA_ROOT, dest]) != DATA_ROOT
+        or os.path.commonpath([DATA_ROOT, tmp]) != DATA_ROOT
+    ):
+        raise HTTPException(400, "Invalid file path")
+
     os.makedirs(user_dir, exist_ok=True)
-    dest = os.path.join(user_dir, fname)
-    tmp = dest + ".part"
 
     limit = MAX_UPLOAD_MB * 1024 * 1024
     written = 0
