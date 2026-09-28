@@ -65,17 +65,17 @@ for kind, ns, name, containers in workloads:
                 key = (ns, ref["name"])
                 if key not in secrets:
                     fails.append(f"{ident}: env {e['name']} -> Secret "
-                                 f"{ref['name']} not defined in repo")
+                                 f"[REDACTED] not defined in repo")
                 elif ref["key"] not in secrets[key]:
                     fails.append(f"{ident}: env {e['name']} -> key "
-                                 f"'{ref['key']}' missing in Secret {ref['name']}")
+                                 f"'[REDACTED]' missing in Secret [REDACTED]")
                 else:
                     passes.append(f"{ident}: env {e['name']} resolves to "
-                                  f"Secret {ref['name']}/{ref['key']}")
+                                  f"Secret [REDACTED]/[REDACTED]")
         for er in c.get("envFrom", []) or []:
             sr = er.get("secretRef")
             if sr and (ns, sr["name"]) not in secrets:
-                fails.append(f"{ident}: envFrom Secret {sr['name']} "
+                fails.append(f"{ident}: envFrom Secret [REDACTED] "
                              f"not defined in repo")
         img = c.get("image", "")
         if img.endswith(":latest") or ":" not in img.rsplit("/", 1)[-1]:
