@@ -17,8 +17,12 @@ from security import (
     TokenExpired, TokenInvalid,
 )
 
-DATA_DIR = os.environ.get("DATA_DIR", "/data")
-os.makedirs(DATA_DIR, exist_ok=True)
+SAFE_DATA_ROOT = os.path.realpath("/data")
+DATA_DIR = os.environ.get("DATA_DIR", SAFE_DATA_ROOT)
+DATA_DIR_REAL = os.path.realpath(DATA_DIR)
+if os.path.commonpath([SAFE_DATA_ROOT, DATA_DIR_REAL]) != SAFE_DATA_ROOT:
+    raise ValueError("DATA_DIR must be within /data")
+os.makedirs(DATA_DIR_REAL, exist_ok=True)
 
 JWT_SECRET = os.environ["JWT_SECRET"]
 TOKEN_TTL_MINUTES = int(os.environ.get("TOKEN_TTL_MINUTES", "60"))
@@ -406,9 +410,13 @@ async def upload(file: UploadFile = File(...), user=Depends(current_user)):
     except ValueError as e:
         raise HTTPException(400, str(e))
 
-    user_dir = os.path.join(DATA_DIR, str(user["id"]))
+    user_dir = os.path.realpath(os.path.join(DATA_DIR_REAL, str(user["id"])))
+    if os.path.commonpath([DATA_DIR_REAL, user_dir]) != DATA_DIR_REAL:
+        raise HTTPException(400, "Invalid storage path")
     os.makedirs(user_dir, exist_ok=True)
-    dest = os.path.join(user_dir, fname)
+    dest = os.path.realpath(os.path.join(user_dir, fname))
+    if os.path.commonpath([DATA_DIR_REAL, dest]) != DATA_DIR_REAL:
+        raise HTTPException(400, "Invalid destination path")
     tmp = dest + ".part"
 
     limit = MAX_UPLOAD_MB * 1024 * 1024
